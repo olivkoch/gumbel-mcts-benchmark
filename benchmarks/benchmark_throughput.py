@@ -1,4 +1,8 @@
-"""Benchmark of throughput for PUCT vs GumbelDense vs GumbelSparse on Tic-Tac-Toe and Gomoku."""
+"""Benchmark of throughput for PUCT vs GumbelDense vs GumbelSparse on Tic-Tac-Toe and Gomoku.
+
+If the Rust extension (`rust-python/`, built with maturin) is installed, each
+variant is also benchmarked through it (rows suffixed "-Rs").
+"""
 
 import time
 import numpy as np
@@ -7,6 +11,12 @@ import torch.nn as nn
 from game_logic.tictactoe import TicTacToeLogic
 from game_logic.gomoku import GomokuLogic
 from gumbel_mcts import PUCT, GumbelDense, GumbelSparse
+
+try:
+    import gumbel_mcts_rs as gmrs
+    HAS_RS = True
+except ImportError:
+    HAS_RS = False
 
 
 def bench(name, create_and_run, n_warmup=3, n_iter=50):
@@ -85,10 +95,29 @@ def bench_tictactoe():
         tree.initialize_roots([0], board_flat[None], player)
         tree.run_simulation_batch(model, [0], num_simulations=num_sims)
 
+    def run_puct_rs():
+        tree = gmrs.PUCT(1, 500, logic, device="cpu")
+        tree.initialize_roots([0], board[None], player)
+        tree.run_simulation_batch(model, [0], num_simulations=num_sims)
+
+    def run_dense_rs():
+        tree = gmrs.GumbelDense(1, 500, logic, device="cpu")
+        tree.initialize_roots([0], board[None], player)
+        tree.run_simulation_batch(model, [0], num_simulations=num_sims)
+
+    def run_sparse_rs():
+        tree = gmrs.GumbelSparse(1, 500, logic, device="cpu")
+        tree.initialize_roots([0], board_flat[None], player)
+        tree.run_simulation_batch(model, [0], num_simulations=num_sims)
+
     print(f"Tic-Tac-Toe (9 actions)  |  {num_sims} sims  |  50 iterations\n")
     bench("PUCT", run_puct)
     bench("GumbelDense", run_dense)
     bench("GumbelSparse", run_sparse)
+    if HAS_RS:
+        bench("PUCT-Rs", run_puct_rs)
+        bench("GumbelDense-Rs", run_dense_rs)
+        bench("GumbelSparse-Rs", run_sparse_rs)
 
 
 def bench_gomoku():
@@ -118,9 +147,28 @@ def bench_gomoku():
             tree.initialize_roots([0], board_flat[None], player)
             tree.run_simulation_batch(model, [0], num_simulations=ns)
 
+        def run_puct_rs(ns=num_sims, mn=max_nodes):
+            tree = gmrs.PUCT(1, mn, logic, device="cpu")
+            tree.initialize_roots([0], board[None], player)
+            tree.run_simulation_batch(model, [0], num_simulations=ns)
+
+        def run_dense_rs(ns=num_sims, mn=max_nodes):
+            tree = gmrs.GumbelDense(1, mn, logic, device="cpu")
+            tree.initialize_roots([0], board[None], player)
+            tree.run_simulation_batch(model, [0], num_simulations=ns)
+
+        def run_sparse_rs(ns=num_sims, mn=max_nodes):
+            tree = gmrs.GumbelSparse(1, mn, logic, device="cpu")
+            tree.initialize_roots([0], board_flat[None], player)
+            tree.run_simulation_batch(model, [0], num_simulations=ns)
+
         bench("PUCT", run_puct, n_warmup=2, n_iter=20)
         bench("GumbelDense", run_dense, n_warmup=2, n_iter=20)
         bench("GumbelSparse", run_sparse, n_warmup=2, n_iter=20)
+        if HAS_RS:
+            bench("PUCT-Rs", run_puct_rs, n_warmup=2, n_iter=20)
+            bench("GumbelDense-Rs", run_dense_rs, n_warmup=2, n_iter=20)
+            bench("GumbelSparse-Rs", run_sparse_rs, n_warmup=2, n_iter=20)
 
 
 if __name__ == "__main__":

@@ -4,10 +4,23 @@ Fixes Gumbel at a low sim count and ramps up PUCT sims until win rate equalizes.
 Uses the heuristic (simulated trained) model only.
 """
 
+import sys
 import numpy as np
 import torch
 from game_logic.gomoku import GomokuLogic
 from gumbel_mcts import PUCT, GumbelSparse
+
+try:
+    import gumbel_mcts_rs as gmrs
+    HAS_RS = True
+except ImportError:
+    HAS_RS = False
+
+# Pass --rust to run the search through the Rust extension (rust-python/).
+USE_RUST = "--rust" in sys.argv
+if USE_RUST and not HAS_RS:
+    sys.exit("--rust requested but gumbel_mcts_rs is not installed "
+             "(cd rust-python && maturin develop --release)")
 
 BOARD_SIZE = 15
 NUM_ACTIONS = BOARD_SIZE * BOARD_SIZE
@@ -115,7 +128,8 @@ class HeuristicGomokuModel:
 
 
 def pick_move_puct(logic, model, board, player, num_sims, max_nodes):
-    tree = PUCT(n_games=1, max_nodes=max_nodes, logic=logic, device="cpu")
+    cls = gmrs.PUCT if USE_RUST else PUCT
+    tree = cls(n_games=1, max_nodes=max_nodes, logic=logic, device="cpu")
     tree.initialize_roots([0], board[None], np.array([player]))
     tree.run_simulation_batch(model, [0], num_simulations=num_sims)
     visits, _ = tree.get_all_root_data(n_active=1)
@@ -123,7 +137,8 @@ def pick_move_puct(logic, model, board, player, num_sims, max_nodes):
 
 
 def pick_move_gumbel(logic, model, board, player, num_sims, max_nodes):
-    tree = GumbelSparse(n_games=1, max_nodes=max_nodes, logic=logic, device="cpu")
+    cls = gmrs.GumbelSparse if USE_RUST else GumbelSparse
+    tree = cls(n_games=1, max_nodes=max_nodes, logic=logic, device="cpu")
     tree.initialize_roots([0], board.ravel()[None], np.array([player]))
     moves = tree.run_simulation_batch(model, [0], num_simulations=num_sims)
     return int(moves[0])
@@ -178,6 +193,8 @@ def main():
 
     model = HeuristicGomokuModel(noise_scale=noise_scale)
 
+    if USE_RUST:
+        print("Engine: gumbel_mcts_rs (Rust extension)")
     print(f"Asymmetry benchmark: PUCT vs Gumbel (heuristic model, noise={noise_scale})")
     print(f"Gumbel fixed at {gumbel_sims} sims  |  Gomoku 15x15  |  "
           f"{n_games} games per setting (alternating colors)\n")

@@ -4,11 +4,24 @@ This benchmark demonstrates that Sparse Gumbel MCTS achieves higher win rate tha
 
 """
 
+import sys
 import numpy as np
 import torch
 import torch.nn as nn
 from game_logic.gomoku import GomokuLogic
 from gumbel_mcts import PUCT, GumbelSparse
+
+try:
+    import gumbel_mcts_rs as gmrs
+    HAS_RS = True
+except ImportError:
+    HAS_RS = False
+
+# Pass --rust to run the search through the Rust extension (rust-python/).
+USE_RUST = "--rust" in sys.argv
+if USE_RUST and not HAS_RS:
+    sys.exit("--rust requested but gumbel_mcts_rs is not installed "
+             "(cd rust-python && maturin develop --release)")
 
 BOARD_SIZE = 15
 NUM_ACTIONS = BOARD_SIZE * BOARD_SIZE
@@ -146,7 +159,8 @@ class RandomGomokuModel:
 
 
 def pick_move_puct(logic, model, board, player, num_sims, max_nodes):
-    tree = PUCT(n_games=1, max_nodes=max_nodes, logic=logic, device="cpu")
+    cls = gmrs.PUCT if USE_RUST else PUCT
+    tree = cls(n_games=1, max_nodes=max_nodes, logic=logic, device="cpu")
     tree.initialize_roots([0], board[None], np.array([player]))
     tree.run_simulation_batch(model, [0], num_simulations=num_sims)
     visits, _ = tree.get_all_root_data(n_active=1)
@@ -154,7 +168,8 @@ def pick_move_puct(logic, model, board, player, num_sims, max_nodes):
 
 
 def pick_move_gumbel(logic, model, board, player, num_sims, max_nodes):
-    tree = GumbelSparse(n_games=1, max_nodes=max_nodes, logic=logic, device="cpu")
+    cls = gmrs.GumbelSparse if USE_RUST else GumbelSparse
+    tree = cls(n_games=1, max_nodes=max_nodes, logic=logic, device="cpu")
     tree.initialize_roots([0], board.ravel()[None], np.array([player]))
     moves = tree.run_simulation_batch(model, [0], num_simulations=num_sims)
     return int(moves[0])
@@ -217,6 +232,9 @@ def main():
     n_games = 30
     num_sims = 50
     max_nodes = 2000
+
+    if USE_RUST:
+        print("Engine: gumbel_mcts_rs (Rust extension)\n")
 
     # --- Round 1: Random model (uniform policy, zero value) ---
     print(f"Round 1: RANDOM MODEL (uniform policy)")

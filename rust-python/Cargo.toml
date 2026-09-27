@@ -1,0 +1,19 @@
+[package]
+name = "gumbel-mcts-rs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "gumbel_mcts_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+gumbel-mcts-bench = { path = "../rust" }
+pyo3 = "0.29"
+numpy = "0.29"
+rand = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

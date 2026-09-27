@@ -17,6 +17,12 @@ from utils.gomoku_env import GomokuEnv
 from game_logic.gomoku import GomokuLogic
 from tests.test_utils import create_eval_func
 
+try:
+    import gumbel_mcts_rs as gmrs
+    HAS_RS = True
+except ImportError:
+    HAS_RS = False
+
 import warnings
 warnings.filterwarnings("ignore", message=".*NNPACK.*")
 
@@ -118,7 +124,10 @@ def run_benchmark(model_v3, model_name: str, device: str, eval_func_v2,
     print(f"\n{'='*80}")
     print(f"BENCHMARKING: {model_name}")
     print(f"{'='*80}")
-    print(f"{'Config':<40} | {'V2 (s)':<10} | {'V3 (s)':<10} | {'V3 sims/s':<12} | {'Speedup':<10}")
+    if HAS_RS:
+        print(f"{'Config':<40} | {'V2 (s)':<10} | {'V3 (s)':<10} | {'V3 sims/s':<12} | {'V3rs (s)':<10} | {'V3rs sims/s':<12} | {'Speedup':<10}")
+    else:
+        print(f"{'Config':<40} | {'V2 (s)':<10} | {'V3 (s)':<10} | {'V3 sims/s':<12} | {'Speedup':<10}")
     print("-" * 80)
 
     results = []
@@ -167,17 +176,44 @@ def run_benchmark(model_v3, model_name: str, device: str, eval_func_v2,
                 torch.cuda.synchronize()
             v3_times.append(time.perf_counter() - start)
         v3_time = np.median(v3_times)
-        
+
+        # --- Benchmark V3-Rs (Rust extension, same model + eval callback) ---
+        v3rs_time = None
+        v3rs_sps = None
+        if HAS_RS:
+            v3rs_times = []
+            for _ in range(n_repeats):
+                start = time.perf_counter()
+                max_nodes = int((1 + sims) * n_games * 2.0)
+                tree = gmrs.PUCT(n_games, max_nodes, logic, device=device)
+                tree.initialize_roots(active, boards, players)
+                tree.run_simulation_batch(
+                    model_v3, active_games=active, num_simulations=sims,
+                    c_puct_base=19652, c_puct_init=1.25
+                )
+                if device == 'cuda':
+                    torch.cuda.synchronize()
+                v3rs_times.append(time.perf_counter() - start)
+            v3rs_time = np.median(v3rs_times)
+            v3rs_sps = (n_games * sims) / v3rs_time
+
         # Calculate metrics
         speedup = v2_time / v3_time
         v3_sps = (n_games * sims) / v3_time
-        
-        print(f"{cfg_str:<40} | {v2_time:<10.3f} | {v3_time:<10.3f} | {v3_sps:<12.0f} | {speedup:<10.2f}x")
-        
+
+        if HAS_RS:
+            speedup_rs = v2_time / v3rs_time
+            print(f"{cfg_str:<40} | {v2_time:<10.3f} | {v3_time:<10.3f} | {v3_sps:<12.0f} | "
+                  f"{v3rs_time:<10.3f} | {v3rs_sps:<12.0f} | {speedup_rs:<10.2f}x")
+        else:
+            print(f"{cfg_str:<40} | {v2_time:<10.3f} | {v3_time:<10.3f} | {v3_sps:<12.0f} | {speedup:<10.2f}x")
+
         results.append({
             "config": cfg,
             "v2_time": v2_time,
             "v3_time": v3_time,
+            "v3rs_time": v3rs_time,
+            "v3rs_sims_per_sec": v3rs_sps,
             "speedup": speedup,
             "v3_sims_per_sec": v3_sps
         })
